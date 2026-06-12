@@ -1,136 +1,194 @@
 # Hermes on Zeabur
 
-This repository contains the Zeabur deployment assets for running
-Hermes Agent with the official Docker image.
+This repository contains the minimal deployment assets for running Hermes Agent
+on Zeabur with Dockerfile-based deployment.
 
-The deployment runs Hermes in gateway mode, exposes an OpenAI-compatible API,
-enables the Hermes dashboard, and persists Hermes state on a Zeabur volume.
-
-## Features
-
-- Deploys with a root `Dockerfile` for Zeabur Dockerfile-based deployment.
-- Deploys `nousresearch/hermes-agent:v2026.6.5` as a Zeabur `PREBUILT_V2` service.
-- Starts Hermes with `/opt/hermes/docker/entrypoint.sh gateway run`, which keeps
-  the container running as a gateway service instead of launching the interactive
-  CLI.
-- Exposes the Hermes API on port `8642`.
-- Exposes the Hermes dashboard on port `9119`.
-- Stores persistent Hermes data in `/opt/data`, including sessions, memories,
-  skills, logs, and generated configuration files.
-- Loads deployment secrets and runtime settings from `.env`.
+The service uses the official Hermes Agent Docker image, starts Hermes in
+gateway mode, exposes the OpenAI-compatible API, and can optionally expose the
+Hermes dashboard.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `Dockerfile` | Minimal Dockerfile wrapper around the pinned official Hermes Agent image. Zeabur auto-detects this file for Dockerfile-based deployment. |
-| `.dockerignore` | Keeps local secrets, Hermes state, and template-only files out of the Docker build context. |
-| `zeabur.hermes.yaml` | Zeabur template that defines the Hermes Agent Docker service, ports, volume, domains, and environment variables. |
-| `deploy-hermes-zeabur.sh` | Deployment script that loads `.env` and deploys the template to Zeabur with `npx zeabur@latest template deploy`. |
-| `CLAUDE.md` | Local deployment notes, including the target Zeabur project, active service ID, and public URLs. |
+| `Dockerfile` | Minimal wrapper around the pinned official Hermes Agent image. Zeabur auto-detects this file for Dockerfile-based deployment. |
+| `.dockerignore` | Keeps local secrets, Hermes state, skills, and docs out of the Docker build context. |
+| `.gitignore` | Prevents `.env` from being committed. |
 | `skills-lock.json` | Lock file for Zeabur-related agent skills used by this workspace. |
-| `.env` | Local environment file for deployment variables. This file contains secrets and should not be committed. |
-
-## Environment Variables
-
-The deployment script expects these values in `.env`:
-
-```dotenv
-OPENAI_API_KEY=...
-API_SERVER_KEY=...
-API_SERVER_CORS_ORIGINS=*
-```
-
-The template also configures these runtime values automatically:
-
-```dotenv
-API_SERVER_ENABLED=true
-API_SERVER_HOST=0.0.0.0
-HERMES_DASHBOARD=1
-HERMES_DASHBOARD_HOST=0.0.0.0
-HERMES_DASHBOARD_PORT=9119
-```
-
-Optional deployment overrides can be passed as shell environment variables:
-
-```bash
-PROJECT_ID=project-... \
-API_DOMAIN=my-hermes-api \
-DASHBOARD_DOMAIN=my-hermes-dashboard \
-bash deploy-hermes-zeabur.sh
-```
-
-The template pins the Hermes image to `nousresearch/hermes-agent:v2026.6.5` instead of `latest`. The `latest`/`main` tags were updated on 2026-06-12 and the deployed container failed during startup because `s6-setuidgid` was missing from the image.
+| `.env` | Local reference for runtime variables. This file contains secrets and must not be committed. |
 
 ## Dockerfile Deployment
 
-Use this flow when you want Zeabur to build from the repository `Dockerfile`.
-Zeabur automatically detects a root-level `Dockerfile` and deploys with Docker.
+Zeabur automatically deploys this repository with Docker because a root
+`Dockerfile` is present.
 
-1. Push this repository to GitHub, or deploy the current directory directly with the Zeabur CLI.
-2. In the Zeabur service, add a persistent volume mounted at `/opt/data`.
-3. Configure HTTP ports `8642` and, if using the dashboard, `9119`.
-4. Add the required environment variables from the section above.
-5. Deploy the service.
-
-The Dockerfile intentionally pins:
+The Dockerfile intentionally pins the image:
 
 ```dockerfile
 FROM nousresearch/hermes-agent:v2026.6.5
 ```
 
-Do not switch it to `latest` or `main` unless you have verified that the
-floating image boots correctly on Zeabur.
+Do not switch this to `latest` or `main` unless the floating image has been
+verified on Zeabur. The floating tags changed on 2026-06-12 and previously
+failed during startup because `s6-setuidgid` was missing from the image.
 
-## Template Deployment
-
-Install Node.js and make sure the Zeabur CLI can run through `npx`. Then deploy:
-
-```bash
-bash deploy-hermes-zeabur.sh
-```
-
-By default, the script deploys to:
+The container starts with:
 
 ```text
-project-6a041690dd502f86055b715b
+/opt/hermes/docker/entrypoint.sh gateway run
 ```
 
-Default public domain prefixes:
+This is required for container platforms. Running the default interactive Hermes
+CLI would exit because there is no attached terminal.
 
-```text
-API: hermes-api-6a041690
-Dashboard: hermes-dashboard-6a041690
-```
+## Required Zeabur Service Settings
 
-The script uses:
+Configure these settings on the Zeabur service after creating it from this
+repository.
 
-```bash
-npx zeabur@latest template deploy \
-  -i=false \
-  --json \
-  -f zeabur.hermes.yaml \
-  --project-id "$PROJECT_ID"
-```
+| Setting | Value | Why |
+| --- | --- | --- |
+| Deployment method | Dockerfile | Zeabur should detect the root `Dockerfile` automatically. |
+| Persistent volume mount path | `/opt/data` | Hermes stores config, API keys, sessions, memories, skills, profiles, and logs here. |
+| API HTTP port | `8642` | Hermes gateway OpenAI-compatible API and health endpoint. |
+| Dashboard HTTP port | `9119` | Hermes dashboard, only useful when dashboard env vars are enabled. |
+| Resource size | At least 2 CPU / 4 GB memory recommended | Hermes can run tools, browsers, skills, and multiple gateway processes. |
 
-## Current Deployment
+Do not run two Hermes gateway containers against the same `/opt/data` volume at
+the same time. Hermes session and memory files are not designed for concurrent
+writes from multiple containers.
 
-The latest recorded active deployment is:
+## Required Environment Variables
 
-| Field | Value |
+Add these variables in the Zeabur service environment variables page.
+
+| Variable | Required | Example | Notes |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | Yes | `sk-...` | Used by Hermes for model access when configured for OpenAI-compatible usage. Use the real secret value in Zeabur, not the example. |
+| `API_SERVER_ENABLED` | Yes | `true` | Enables the gateway API server. |
+| `API_SERVER_HOST` | Yes | `0.0.0.0` | Required so the API server is reachable from outside the container. |
+| `API_SERVER_KEY` | Yes | `openssl rand -hex 32` | API auth key. Hermes requires at least 8 characters; use a long random value. |
+| `API_SERVER_CORS_ORIGINS` | Recommended | `*` | Use `*` for broad testing, or a comma-separated allowlist for production clients. |
+| `HERMES_DASHBOARD` | Optional | `1` | Enables the supervised Hermes dashboard service. |
+| `HERMES_DASHBOARD_HOST` | Required if dashboard is enabled | `0.0.0.0` | Required so the dashboard is reachable through Zeabur networking. |
+| `HERMES_DASHBOARD_PORT` | Required if dashboard is enabled | `9119` | Must match the dashboard HTTP port configured in Zeabur. |
+
+## Dashboard Authentication
+
+If `HERMES_DASHBOARD=1` and the dashboard is exposed publicly, configure
+authentication. The dashboard can expose sensitive data such as API keys,
+sessions, and agent state.
+
+Recommended options:
+
+| Variable | When to use |
 | --- | --- |
-| Project ID | `project-6a041690dd502f86055b715b` |
-| Service ID | `6a043738dd502f86055b7d58` |
-| Service name | `hermes-agent-inal` |
-| API URL | `https://hermes-api-6a041690.zeabur.app` |
-| Dashboard URL | `https://hermes-dashboard-6a041690.zeabur.app` |
+| `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` | Basic username/password auth for trusted private deployments. |
+| `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` | Basic username/password auth for trusted private deployments. |
+| `HERMES_DASHBOARD_BASIC_AUTH_SECRET` | Stable session signing secret for basic auth across restarts. |
+| `HERMES_DASHBOARD_OAUTH_CLIENT_ID` | Nous Portal OAuth for public hosted deployments. |
+| `HERMES_DASHBOARD_OIDC_ISSUER` | Self-hosted OpenID Connect provider. |
+| `HERMES_DASHBOARD_OIDC_CLIENT_ID` | Self-hosted OpenID Connect provider. |
 
-## Notes
+For short-lived testing only, you can set:
 
-- Do not commit `.env`; it contains API keys and service credentials.
-- Run `bash tests/check-hermes-template.sh` before deployment if you edit the template. It verifies that the Hermes image is not using a floating `latest`/`main` tag.
-- The Hermes service must run in gateway mode for a container platform. Running
-  the default interactive CLI in Zeabur causes the container to exit because
-  there is no terminal attached.
-- The Zeabur template mounts `/opt/data` so Hermes state survives restarts and
-  redeployments.
+```dotenv
+HERMES_DASHBOARD_INSECURE=1
+```
+
+Do not use `HERMES_DASHBOARD_INSECURE=1` for a public production service unless
+another trusted auth layer sits in front of Zeabur.
+
+## Minimal API-Only Configuration
+
+Use this when you only need the OpenAI-compatible gateway API.
+
+```dotenv
+OPENAI_API_KEY=sk-...
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_KEY=<long-random-secret>
+API_SERVER_CORS_ORIGINS=*
+```
+
+Zeabur settings:
+
+```text
+Volume: /opt/data
+HTTP port: 8642
+```
+
+## API Plus Dashboard Configuration
+
+Use this when you also want the Hermes dashboard.
+
+```dotenv
+OPENAI_API_KEY=sk-...
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_KEY=<long-random-secret>
+API_SERVER_CORS_ORIGINS=*
+HERMES_DASHBOARD=1
+HERMES_DASHBOARD_HOST=0.0.0.0
+HERMES_DASHBOARD_PORT=9119
+
+# Choose one dashboard auth method before exposing this publicly.
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=<username>
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<strong-password>
+HERMES_DASHBOARD_BASIC_AUTH_SECRET=<long-random-secret>
+```
+
+Zeabur settings:
+
+```text
+Volume: /opt/data
+HTTP ports: 8642, 9119
+```
+
+## Managing Variables With Zeabur CLI
+
+Prefer the Zeabur dashboard for secrets. If using the CLI, always invoke it with
+`npx zeabur@latest`.
+
+Create variables:
+
+```bash
+npx zeabur@latest variable create --id <service-id> \
+  -k "API_SERVER_ENABLED=true" \
+  -k "API_SERVER_HOST=0.0.0.0" \
+  -k "API_SERVER_CORS_ORIGINS=*" \
+  -y -i=false
+```
+
+Update existing variables:
+
+```bash
+npx zeabur@latest variable update --id <service-id> \
+  -k "API_SERVER_HOST=0.0.0.0" \
+  -y -i=false
+```
+
+Avoid `variable env --id <service-id> -f .env` unless you intentionally want to
+replace the entire variable set on the service. That command removes existing
+variables not present in the file.
+
+Restart the service after changing runtime variables.
+
+## Deployment Checklist
+
+1. Deploy this repository to Zeabur as a Dockerfile service.
+2. Add a persistent volume mounted at `/opt/data`.
+3. Add HTTP port `8642`.
+4. Add HTTP port `9119` only if using the dashboard.
+5. Add the required environment variables.
+6. Configure dashboard authentication before exposing dashboard publicly.
+7. Restart or redeploy the service after changing variables or volume settings.
+8. Check Zeabur runtime logs for Hermes gateway startup messages.
+
+## Current Known Limitations
+
+- This repository currently does not include a Zeabur template YAML or deployment
+  script. Use Zeabur's Dockerfile deployment flow from the dashboard or CLI.
+- Local `.env` is only a reference and is excluded from the Docker build context.
+- Dockerfile deployment cannot declare Zeabur volumes by itself; configure the
+  `/opt/data` mount in Zeabur.
