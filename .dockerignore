@@ -4,8 +4,5 @@
 .agents
 .claude
 README.md
-CLAUDE.md
 skills-lock.json
-tests
-zeabur.hermes.yaml
-deploy-hermes-zeabur.sh
+

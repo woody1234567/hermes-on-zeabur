@@ -67,8 +67,9 @@ Add these variables in the Zeabur service environment variables page.
 | `OPENAI_API_KEY` | Yes | `sk-...` | Used by Hermes for model access when configured for OpenAI-compatible usage. Use the real secret value in Zeabur, not the example. |
 | `API_SERVER_ENABLED` | Yes | `true` | Enables the gateway API server. |
 | `API_SERVER_HOST` | Yes | `0.0.0.0` | Required so the API server is reachable from outside the container. |
-| `API_SERVER_KEY` | Yes | `openssl rand -hex 32` | API auth key. Hermes requires at least 8 characters; use a long random value. |
-| `API_SERVER_CORS_ORIGINS` | Recommended | `*` | Use `*` for broad testing, or a comma-separated allowlist for production clients. |
+| `API_SERVER_PORT` | Recommended | `8642` | Hermes defaults to `8642`; set it explicitly so the Zeabur HTTP port and Hermes API port stay aligned. |
+| `API_SERVER_KEY` | Yes | `openssl rand -hex 32` | Bearer token for the Hermes API. This must match the API key configured in Open WebUI. Hermes requires at least 8 characters; use a long random value. |
+| `API_SERVER_CORS_ORIGINS` | Optional | `*` | Not required for Open WebUI because Open WebUI connects server-to-server. Use this only for browser-based clients that call Hermes directly. |
 | `HERMES_DASHBOARD` | Optional | `1` | Enables the supervised Hermes dashboard service. |
 | `HERMES_DASHBOARD_HOST` | Required if dashboard is enabled | `0.0.0.0` | Required so the dashboard is reachable through Zeabur networking. |
 | `HERMES_DASHBOARD_PORT` | Required if dashboard is enabled | `9119` | Must match the dashboard HTTP port configured in Zeabur. |
@@ -107,8 +108,8 @@ Use this when you only need the OpenAI-compatible gateway API.
 OPENAI_API_KEY=sk-...
 API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
 API_SERVER_KEY=<long-random-secret>
-API_SERVER_CORS_ORIGINS=*
 ```
 
 Zeabur settings:
@@ -126,8 +127,8 @@ Use this when you also want the Hermes dashboard.
 OPENAI_API_KEY=sk-...
 API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
 API_SERVER_KEY=<long-random-secret>
-API_SERVER_CORS_ORIGINS=*
 HERMES_DASHBOARD=1
 HERMES_DASHBOARD_HOST=0.0.0.0
 HERMES_DASHBOARD_PORT=9119
@@ -145,6 +146,48 @@ Volume: /opt/data
 HTTP ports: 8642, 9119
 ```
 
+## Connecting Open WebUI
+
+In Open WebUI, add Hermes as an OpenAI-compatible connection.
+
+| Setting | Value |
+| --- | --- |
+| URL | `https://<your-hermes-zeabur-domain>/v1` |
+| API Key | The exact same value as `API_SERVER_KEY` |
+| API Type | Chat Completions |
+
+The `/v1` suffix is required. Open WebUI may pass its basic connection test
+without `/v1`, but model listing will fail.
+
+If you deploy Open WebUI as a separate service, set these Open WebUI variables
+on first launch:
+
+```dotenv
+OPENAI_API_BASE_URL=https://<your-hermes-zeabur-domain>/v1
+OPENAI_API_KEY=<same-value-as-API_SERVER_KEY>
+ENABLE_OLLAMA_API=false
+```
+
+`ENABLE_OLLAMA_API=false` is optional, but it keeps an empty Ollama backend from
+appearing above Hermes models in the Open WebUI model picker.
+
+Open WebUI stores connection settings in its database after first launch. If you
+change the URL or key later, update the connection in Admin Settings or reset
+the Open WebUI data volume.
+
+## Verifying The Hermes API
+
+After deployment, verify the Zeabur URL from your local machine:
+
+```bash
+curl https://<your-hermes-zeabur-domain>/health
+curl -H "Authorization: Bearer <same-value-as-API_SERVER_KEY>" \
+  https://<your-hermes-zeabur-domain>/v1/models
+```
+
+The health endpoint should return a status payload, and `/v1/models` should list
+the Hermes agent model.
+
 ## Managing Variables With Zeabur CLI
 
 Prefer the Zeabur dashboard for secrets. If using the CLI, always invoke it with
@@ -156,7 +199,7 @@ Create variables:
 npx zeabur@latest variable create --id <service-id> \
   -k "API_SERVER_ENABLED=true" \
   -k "API_SERVER_HOST=0.0.0.0" \
-  -k "API_SERVER_CORS_ORIGINS=*" \
+  -k "API_SERVER_PORT=8642" \
   -y -i=false
 ```
 
@@ -165,6 +208,7 @@ Update existing variables:
 ```bash
 npx zeabur@latest variable update --id <service-id> \
   -k "API_SERVER_HOST=0.0.0.0" \
+  -k "API_SERVER_PORT=8642" \
   -y -i=false
 ```
 
@@ -181,9 +225,12 @@ Restart the service after changing runtime variables.
 3. Add HTTP port `8642`.
 4. Add HTTP port `9119` only if using the dashboard.
 5. Add the required environment variables.
-6. Configure dashboard authentication before exposing dashboard publicly.
-7. Restart or redeploy the service after changing variables or volume settings.
-8. Check Zeabur runtime logs for Hermes gateway startup messages.
+6. Restart or redeploy the service after changing variables or volume settings.
+7. Check Zeabur runtime logs for Hermes gateway startup messages.
+8. Verify `/health` and authenticated `/v1/models` on the Zeabur domain.
+9. Configure Open WebUI with `https://<your-hermes-zeabur-domain>/v1` and the
+   same value as `API_SERVER_KEY`.
+10. Configure dashboard authentication before exposing dashboard publicly.
 
 ## Current Known Limitations
 
